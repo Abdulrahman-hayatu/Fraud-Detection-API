@@ -4,3 +4,10 @@ __pycache__/
 .venv
 .idea/
 .vscode/
+
+# Training run artifacts (models, plots, metrics) -- these regenerate from
+# train.py and shouldn't bloat git history. The canonical served model at
+# Fraud_Detection/models/Fraud_Detection_Pipeline.pkl is tracked by DVC instead
+# (see Fraud_Detection/models/Fraud_Detection_Pipeline.pkl.dvc).
+/models/
+/ieee_fraud_detection.parquet

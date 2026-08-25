@@ -1,0 +1,5 @@
+[core]
+    remote = storage
+['remote "storage"']
+    url = s3://dvc-fraud-detection/dvc-storage
+    region = eu-north-1
