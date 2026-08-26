@@ -109,6 +109,48 @@ http://127.0.0.1:8000/docs
 ```
 
 
+## 🏋️ Training
+
+```bash
+pip install -r requirements-train.txt
+python train.py --data-path ieee_fraud_detection.parquet --output-dir models --promote
+```
+
+`--promote` overwrites the model the API serves (`Fraud_Detection/models/Fraud_Detection_Pipeline.pkl`)
+and writes `model_metadata.json` alongside it, recording the training run ID and metrics.
+Omit `--promote` to train and inspect results in `models/<run_id>/` without affecting the live model.
+
+The model and training data are tracked with **DVC**, not committed directly to git.
+After training, run `dvc push` to persist the new model artifact to remote storage.
+
+
+## 📝 Prediction Logging
+
+Every `/predict` call is appended to `logs/predictions.jsonl`, tagged with the serving
+model's run ID and a `source` field (`"live"` or `"synthetic"`). This log is what later
+drift-monitoring work (e.g. Evidently) will compare against the training distribution.
+
+**Known limitation:** this writes to local disk. On a platform with an ephemeral
+filesystem (e.g. Render without a persistent disk), this log is wiped on every
+restart/redeploy — fine for local development, not sufficient for real production
+drift monitoring without shipping the log somewhere durable.
+
+### Synthetic demo traffic
+
+`scripts/generate_synthetic_traffic.py` sends a batch of requests sampled from real
+feature combinations in the training data, tagged `"source": "synthetic"` so it never
+gets confused with real usage.
+
+```bash
+uvicorn app.main:app &
+python scripts/generate_synthetic_traffic.py --n 200
+```
+
+**This traffic exists for demo purposes only** — to populate the logs with realistic-looking
+volume for showcasing the logging/monitoring setup. It is not real production data and should
+be excluded from any actual drift analysis (filter on `"source": "live"`).
+
+
 ## 🏁 Notes
 
 * The model outputs **probability scores**, enabling flexible threshold tuning.
