@@ -45,7 +45,7 @@ def get_risk_level(probability: float) -> str:
 
 
 # Prediction function (used by API)
-def predict_fraud(request: FraudRequest) -> dict:
+def predict_fraud(request: FraudRequest, source: str = "live") -> dict:
     # Convert request to DataFrame
     request_dict = request.model_dump()
     input_df = pd.DataFrame([request_dict])
@@ -61,6 +61,6 @@ def predict_fraud(request: FraudRequest) -> dict:
         "risk_level": get_risk_level(fraud_probability)
     }
 
-    log_prediction(request_dict, response, MODEL_RUN_ID)
+    log_prediction(request_dict, response, MODEL_RUN_ID, source=source)
 
     return response

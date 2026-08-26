@@ -32,12 +32,20 @@ LOG_PATH = LOG_DIR / "predictions.jsonl"
 _write_lock = threading.Lock()
 
 
-def log_prediction(request_data: dict, response_data: dict, model_run_id: str) -> None:
+def log_prediction(request_data: dict, response_data: dict, model_run_id: str, source: str = "live") -> None:
     """Append one prediction record. Never raises -- a logging failure
-    should not break the actual prediction response."""
+    should not break the actual prediction response.
+
+    source: "live" for real API traffic, "synthetic" for generated demo/
+    load-test traffic (see scripts/generate_synthetic_traffic.py). Tagged
+    in the record itself so downstream analysis (e.g. Evidently drift
+    reports) can filter synthetic rows out rather than silently mixing
+    them with real production data.
+    """
     record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "model_run_id": model_run_id,
+        "source": source,
         "input": request_data,
         "output": response_data,
     }
