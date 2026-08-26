@@ -1,5 +1,10 @@
-# Additional dependencies needed only for training (train.py), not for serving.
--r requirements.txt
-pyarrow==25.0.1
-matplotlib==3.10.8
-evidently==0.7.21
+# Serving dependencies for the FastAPI app (app/main.py).
+# Versions pinned to what this pipeline.pkl was actually built and tested against.
+fastapi==0.141.1
+uvicorn==0.52.4
+pydantic==2.13.4
+pandas==2.3.3
+numpy==2.4.4
+scikit-learn==1.8.0
+xgboost==3.4.1
+joblib==1.5.3

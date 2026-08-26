@@ -20,11 +20,16 @@ from pathlib import Path
 
 import joblib
 import matplotlib.pyplot as plt
+import mlflow
+import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+from dotenv import load_dotenv
 
 from app.config import DECISION_THRESHOLD
+from contextlib import nullcontext
+import os
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import (
     average_precision_score,
@@ -51,6 +56,59 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("train")
+
+# Loads MLFLOW_TRACKING_URI/USERNAME/PASSWORD from a local .env file if present
+# (see .env.example). Without this call, those vars would only be picked up
+# if manually exported in the shell every session -- easy to forget, and the
+# exact kind of manual step that's caused problems earlier in this project.
+load_dotenv()
+
+MLFLOW_EXPERIMENT_NAME = "fraud-detection"
+
+
+def setup_mlflow_tracking() -> bool:
+    """Configure MLflow tracking if credentials are present in the environment.
+
+    Reads MLFLOW_TRACKING_URI, MLFLOW_TRACKING_USERNAME, MLFLOW_TRACKING_PASSWORD
+    (a DagsHub access token -- https://dagshub.com/user/settings/tokens). If
+    MLFLOW_TRACKING_URI isn't set, tracking is silently skipped and training
+    proceeds exactly as before -- this keeps local training and CI usable
+    without requiring every environment to have DagsHub credentials configured.
+
+    Returns True if tracking is enabled for this run, False otherwise.
+    """
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
+        logger.info(
+            "MLFLOW_TRACKING_URI not set -- skipping experiment tracking for this run. "
+            "Set MLFLOW_TRACKING_URI, MLFLOW_TRACKING_USERNAME, and MLFLOW_TRACKING_PASSWORD "
+            "(a DagsHub token) to enable it."
+        )
+        return False
+
+    username = os.environ.get("MLFLOW_TRACKING_USERNAME")
+    password = os.environ.get("MLFLOW_TRACKING_PASSWORD")
+    if not username or not password:
+        logger.warning(
+            "MLFLOW_TRACKING_URI is set but MLFLOW_TRACKING_USERNAME/PASSWORD are missing. "
+            "Skipping experiment tracking rather than failing the training run."
+        )
+        return False
+
+    mlflow.set_tracking_uri(tracking_uri)
+    try:
+        mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+    except Exception as e:
+        # set_experiment makes a network call to the tracking server -- a
+        # wrong URL, bad credentials, or an unreachable/down server must
+        # not crash the whole training run over an optional add-on.
+        logger.warning(
+            f"Could not reach MLflow tracking server at {tracking_uri} ({e}). "
+            f"Continuing training without experiment tracking for this run."
+        )
+        return False
+    logger.info(f"MLflow tracking enabled: {tracking_uri} (experiment: {MLFLOW_EXPERIMENT_NAME})")
+    return True
 
 
 def load_data(data_path: Path) -> pd.DataFrame:
@@ -224,6 +282,56 @@ def save_plots(y_test, y_pred, y_proba, pipeline: Pipeline, run_dir: Path):
     logger.info(f"Saved evaluation plots to {run_dir}")
 
 
+def log_to_mlflow(pipeline: Pipeline, metrics: dict, args, df: pd.DataFrame, run_dir: Path) -> None:
+    """Log this run's params, metrics, artifacts, and model to MLflow.
+
+    Only called when tracking is enabled (see setup_mlflow_tracking). Kept
+    as a separate function, not inlined into main(), so a failure here
+    (e.g. a transient network issue talking to the DagsHub-hosted server)
+    can be caught without losing the local run -- the local model.pkl and
+    metrics.json are already saved by the time this runs.
+    """
+    model_params = pipeline.named_steps["model"].get_params()
+    # Log only the hyperparameters that actually affect training behavior --
+    # not every internal sklearn/XGBoost default, which would clutter the
+    # DagsHub UI with dozens of unchanging values.
+    relevant_params = {
+        k: model_params[k]
+        for k in [
+            "n_estimators", "max_depth", "learning_rate", "subsample",
+            "colsample_bytree", "objective", "eval_metric",
+            "scale_pos_weight", "random_state",
+        ]
+        if k in model_params
+    }
+    relevant_params.update({
+        "test_size": args.test_size,
+        "decision_threshold": DECISION_THRESHOLD,
+        "n_rows": int(len(df)),
+    })
+
+    try:
+        mlflow.log_params(relevant_params)
+
+        flat_metrics = {k: v for k, v in metrics.items() if k != "optimal_threshold_diagnostic"}
+        mlflow.log_metrics(flat_metrics)
+        diag = metrics.get("optimal_threshold_diagnostic", {})
+        mlflow.log_metrics({
+            f"optimal_threshold_{k}": v
+            for k, v in diag.items()
+            if isinstance(v, (int, float))
+        })
+
+        mlflow.sklearn.log_model(pipeline, name="model", serialization_format="cloudpickle")
+        mlflow.log_artifacts(str(run_dir))
+        logger.info("Logged params, metrics, artifacts, and model to MLflow.")
+    except Exception as e:
+        # Tracking is a nice-to-have on top of the local run, not a
+        # dependency of it -- don't let a DagsHub/network hiccup fail
+        # an otherwise-successful training run.
+        logger.warning(f"MLflow logging failed, continuing without it: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train the fraud detection pipeline")
     parser.add_argument("--data-path", type=Path, default=Path("ieee_fraud_detection.parquet"))
@@ -243,74 +351,93 @@ def main():
     run_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Run ID: {run_id}")
 
-    df = load_data(args.data_path)
-    X_train, X_test, y_train, y_test = split_data(df, args.test_size)
-    pipeline = build_pipeline(y_train)
-
-    logger.info("Training pipeline...")
-    pipeline.fit(X_train, y_train)
-    logger.info("Training complete.")
-
-    metrics, y_pred, y_proba = evaluate(pipeline, X_test, y_test)
-
-    model_path = run_dir / "pipeline.pkl"
-    joblib.dump(pipeline, model_path)
-    logger.info(f"Saved model to {model_path}")
-
-    metadata = {
-        "run_id": run_id,
-        "trained_at_utc": run_id,
-        "data_path": str(args.data_path),
-        "n_rows": int(len(df)),
-        "test_size": args.test_size,
-        "random_state": RANDOM_STATE,
-        "features": PRIORITY_FEATURES,
-        "metrics": metrics,
-    }
-    with open(run_dir / "metrics.json", "w") as f:
-        json.dump(metadata, f, indent=2)
-    logger.info(f"Saved metrics to {run_dir / 'metrics.json'}")
-
-    save_plots(y_test, y_pred, y_proba, pipeline, run_dir)
-
-    if args.promote:
-        canonical_path = Path("Fraud_Detection/models/Fraud_Detection_Pipeline.pkl")
-        canonical_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(pipeline, canonical_path)
-
-        # Written alongside the model so the API can report which run it's
-        # serving. Without this, prediction logs can't be tied to a model
-        # version once you retrain and promote again.
-        canonical_metadata_path = canonical_path.with_name("model_metadata.json")
-        with open(canonical_metadata_path, "w") as f:
-            json.dump(
-                {
-                    "run_id": run_id,
-                    "promoted_at_utc": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
-                    "metrics": metrics,
-                },
-                f,
-                indent=2,
-            )
-
-        logger.info(f"Promoted run {run_id} to {canonical_path} (this is what the API serves).")
+    mlflow_enabled = setup_mlflow_tracking()
+    if mlflow_enabled:
         try:
-            subprocess.run(["dvc", "add", str(canonical_path)], check=True, capture_output=True)
-            logger.info(
-                f"Updated DVC pointer for {canonical_path}. Commit {canonical_path}.dvc AND "
-                f"{canonical_metadata_path} (plain git, not DVC -- it's small and diffable) to git, "
-                f"then run 'dvc push' to persist the new model artifact."
-            )
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            logger.warning(
-                f"Could not auto-update DVC tracking ({e}). "
-                f"Run 'dvc add {canonical_path}' manually before committing."
-            )
+            mlflow_ctx = mlflow.start_run(run_name=run_id)
+        except Exception as e:
+            logger.warning(f"Could not start MLflow run ({e}). Continuing without tracking.")
+            mlflow_enabled = False
+            mlflow_ctx = nullcontext()
     else:
-        logger.info(
-            "Run saved but NOT promoted. Re-run with --promote once you've reviewed "
-            f"{run_dir / 'metrics.json'} and decided this run should replace the served model."
-        )
+        mlflow_ctx = nullcontext()
+
+    with mlflow_ctx:
+        if mlflow_enabled:
+            mlflow.set_tag("run_id", run_id)
+            mlflow.set_tag("promoted", str(args.promote))
+
+        df = load_data(args.data_path)
+        X_train, X_test, y_train, y_test = split_data(df, args.test_size)
+        pipeline = build_pipeline(y_train)
+
+        logger.info("Training pipeline...")
+        pipeline.fit(X_train, y_train)
+        logger.info("Training complete.")
+
+        metrics, y_pred, y_proba = evaluate(pipeline, X_test, y_test)
+
+        model_path = run_dir / "pipeline.pkl"
+        joblib.dump(pipeline, model_path)
+        logger.info(f"Saved model to {model_path}")
+
+        metadata = {
+            "run_id": run_id,
+            "trained_at_utc": run_id,
+            "data_path": str(args.data_path),
+            "n_rows": int(len(df)),
+            "test_size": args.test_size,
+            "random_state": RANDOM_STATE,
+            "features": PRIORITY_FEATURES,
+            "metrics": metrics,
+        }
+        with open(run_dir / "metrics.json", "w") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"Saved metrics to {run_dir / 'metrics.json'}")
+
+        save_plots(y_test, y_pred, y_proba, pipeline, run_dir)
+
+        if mlflow_enabled:
+            log_to_mlflow(pipeline, metrics, args, df, run_dir)
+
+        if args.promote:
+            canonical_path = Path("Fraud_Detection/models/Fraud_Detection_Pipeline.pkl")
+            canonical_path.parent.mkdir(parents=True, exist_ok=True)
+            joblib.dump(pipeline, canonical_path)
+
+            # Written alongside the model so the API can report which run it's
+            # serving. Without this, prediction logs can't be tied to a model
+            # version once you retrain and promote again.
+            canonical_metadata_path = canonical_path.with_name("model_metadata.json")
+            with open(canonical_metadata_path, "w") as f:
+                json.dump(
+                    {
+                        "run_id": run_id,
+                        "promoted_at_utc": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+                        "metrics": metrics,
+                    },
+                    f,
+                    indent=2,
+                )
+
+            logger.info(f"Promoted run {run_id} to {canonical_path} (this is what the API serves).")
+            try:
+                subprocess.run(["dvc", "add", str(canonical_path)], check=True, capture_output=True)
+                logger.info(
+                    f"Updated DVC pointer for {canonical_path}. Commit {canonical_path}.dvc AND "
+                    f"{canonical_metadata_path} (plain git, not DVC -- it's small and diffable) to git, "
+                    f"then run 'dvc push' to persist the new model artifact."
+                )
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                logger.warning(
+                    f"Could not auto-update DVC tracking ({e}). "
+                    f"Run 'dvc add {canonical_path}' manually before committing."
+                )
+        else:
+            logger.info(
+                "Run saved but NOT promoted. Re-run with --promote once you've reviewed "
+                f"{run_dir / 'metrics.json'} and decided this run should replace the served model."
+            )
 
 
 if __name__ == "__main__":
