@@ -1,18 +1,29 @@
 """
 Training script for the Fraud Detection XGBoost pipeline.
+
+Replaces the original Fraud_Detection.ipynb with a reproducible,
+scriptable, loggable training run. Each run is versioned by a
+run_id (timestamp) so later MLOps work (MLflow tracking, promotion
+gates) has something concrete to compare against.
+
+Usage:
+    python train.py --data-path ieee_fraud_detection.parquet
+    python train.py --data-path data.parquet --output-dir models --test-size 0.2
 """
-# imports
+
 import argparse
 import json
 import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
 import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+
 from app.config import DECISION_THRESHOLD
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import (
@@ -35,14 +46,13 @@ NUMERIC_FEATURES = ["TransactionAmt", "C13", "C1", "C14"]
 CATEGORICAL_FEATURES = ["card4", "card6", "P_emaildomain"]
 PRIORITY_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
-# logging setup
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger("train")
 
-# Load the dataset from a Parquet file and validate required columns
+
 def load_data(data_path: Path) -> pd.DataFrame:
     logger.info(f"Loading dataset from {data_path}")
     if not data_path.exists():
@@ -56,7 +66,7 @@ def load_data(data_path: Path) -> pd.DataFrame:
 
     return df
 
-# Split the dataset into training and testing sets and handle missing values in categorical features
+
 def split_data(df: pd.DataFrame, test_size: float):
     X = df[PRIORITY_FEATURES]
     y = df[TARGET]
@@ -71,7 +81,7 @@ def split_data(df: pd.DataFrame, test_size: float):
     logger.info(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")
     return X_train, X_test, y_train, y_test
 
-# Build the model training pipeline
+
 def build_pipeline(y_train: pd.Series) -> Pipeline:
     preprocessor = ColumnTransformer(
         transformers=[
@@ -102,10 +112,14 @@ def build_pipeline(y_train: pd.Series) -> Pipeline:
 
     return Pipeline(steps=[("preprocessor", preprocessor), ("model", model)])
 
-# Find the threshold that maximizes F1 score based on the precision-recall curve
+
 def find_best_f1_threshold(y_test, y_proba) -> tuple[float, float]:
     """Return (threshold, f1) that maximizes F1 across the PR curve.
-    If no thresholds are found (e.g., if y_test is all one class), return (0.5, 0.0).
+
+    This is a diagnostic only -- it does NOT change DECISION_THRESHOLD
+    the API serves at (see app/model.py). Surfacing it here means the
+    precision/recall tradeoff is a visible decision every training run,
+    not something buried in a notebook plot nobody re-opens.
     """
     precision_vals, recall_vals, thresholds = precision_recall_curve(y_test, y_proba)
     denom = precision_vals[:-1] + recall_vals[:-1]
@@ -118,10 +132,11 @@ def find_best_f1_threshold(y_test, y_proba) -> tuple[float, float]:
     best_idx = int(np.argmax(f1_vals))
     return float(thresholds[best_idx]), float(f1_vals[best_idx])
 
-# Evaluate the trained pipeline on the test set and compute various metrics
+
 def evaluate(pipeline: Pipeline, X_test, y_test) -> dict:
     y_proba = pipeline.predict_proba(X_test)[:, 1]
-   
+    # Derived from DECISION_THRESHOLD explicitly -- do NOT use pipeline.predict()
+    # here, since its internal default only coincidentally matches 0.50 today.
     y_pred = (y_proba >= DECISION_THRESHOLD).astype(int)
 
     metrics = {
@@ -161,7 +176,7 @@ def evaluate(pipeline: Pipeline, X_test, y_test) -> dict:
 
     return metrics, y_pred, y_proba
 
-# Save evaluation plots (confusion matrix, ROC curve, precision-recall curve, feature importance)
+
 def save_plots(y_test, y_pred, y_proba, pipeline: Pipeline, run_dir: Path):
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -208,7 +223,7 @@ def save_plots(y_test, y_pred, y_proba, pipeline: Pipeline, run_dir: Path):
 
     logger.info(f"Saved evaluation plots to {run_dir}")
 
-# Main function to orchestrate the training process
+
 def main():
     parser = argparse.ArgumentParser(description="Train the fraud detection pipeline")
     parser.add_argument("--data-path", type=Path, default=Path("ieee_fraud_detection.parquet"))
@@ -262,12 +277,29 @@ def main():
         canonical_path = Path("Fraud_Detection/models/Fraud_Detection_Pipeline.pkl")
         canonical_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump(pipeline, canonical_path)
+
+        # Written alongside the model so the API can report which run it's
+        # serving. Without this, prediction logs can't be tied to a model
+        # version once you retrain and promote again.
+        canonical_metadata_path = canonical_path.with_name("model_metadata.json")
+        with open(canonical_metadata_path, "w") as f:
+            json.dump(
+                {
+                    "run_id": run_id,
+                    "promoted_at_utc": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+                    "metrics": metrics,
+                },
+                f,
+                indent=2,
+            )
+
         logger.info(f"Promoted run {run_id} to {canonical_path} (this is what the API serves).")
         try:
             subprocess.run(["dvc", "add", str(canonical_path)], check=True, capture_output=True)
             logger.info(
-                f"Updated DVC pointer for {canonical_path}. "
-                f"Commit {canonical_path}.dvc to git and run 'dvc push' to persist the new artifact."
+                f"Updated DVC pointer for {canonical_path}. Commit {canonical_path}.dvc AND "
+                f"{canonical_metadata_path} (plain git, not DVC -- it's small and diffable) to git, "
+                f"then run 'dvc push' to persist the new model artifact."
             )
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             logger.warning(
