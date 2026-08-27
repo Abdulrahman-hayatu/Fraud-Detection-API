@@ -86,6 +86,42 @@ def build_current(log_path: Path, include_synthetic: bool) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def extract_drift_signal(result, drift_share_threshold: float) -> dict:
+    """Pull a structured pass/fail signal out of Evidently's metric_results,
+    instead of scraping the rendered HTML (which is fragile -- HTML structure
+    isn't a stable API contract). Reuses Evidently's own DriftedColumnsCount
+    definition of "dataset drift": the share of individually-drifted columns
+    exceeding drift_share_threshold (Evidently's own default is 0.5).
+    """
+    drifted_count = None
+    drifted_share = None
+    per_column = []
+
+    for metric in result.metric_results.values():
+        display_name = getattr(metric, "display_name", "")
+        if display_name == "Count of Drifted Columns":
+            drifted_count = metric.count.value
+            drifted_share = metric.share.value
+        elif display_name.startswith("Value drift for "):
+            column = display_name.removeprefix("Value drift for ")
+            per_column.append({"column": column, "drift_score": float(metric.value)})
+
+    if drifted_share is None:
+        raise RuntimeError(
+            "Could not find 'Count of Drifted Columns' in Evidently's metric_results -- "
+            "the library's internal result structure may have changed. Re-check against "
+            "the installed evidently version before trusting this script's output."
+        )
+
+    return {
+        "drifted_columns_count": int(drifted_count),
+        "drifted_columns_share": float(drifted_share),
+        "drift_share_threshold": drift_share_threshold,
+        "dataset_drift_detected": drifted_share > drift_share_threshold,
+        "per_column_drift_scores": per_column,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate a drift report comparing training vs. production data")
     parser.add_argument("--data-path", type=Path, default=Path("ieee_fraud_detection.parquet"))
@@ -105,6 +141,16 @@ def main():
         "--min-current-rows", type=int, default=30,
         help="Minimum rows required in current data. Below this, Evidently's drift "
              "calculations can be statistically meaningless or crash outright.",
+    )
+    parser.add_argument(
+        "--drift-share-threshold", type=float, default=0.5,
+        help="Share of individually-drifted columns above which the dataset is considered "
+             "drifted overall. 0.5 matches Evidently's own DriftedColumnsCount default.",
+    )
+    parser.add_argument(
+        "--signal-path", type=Path, default=Path("reports/drift_signal.json"),
+        help="Fixed-name JSON output for automation to read (unlike the timestamped HTML "
+             "report, this path doesn't change between runs, so a pipeline can always find it).",
     )
     args = parser.parse_args()
 
@@ -133,6 +179,19 @@ def main():
     report = Report(metrics=[DataDriftPreset()])
     result = report.run(reference_data=reference, current_data=current)
 
+    signal = extract_drift_signal(result, args.drift_share_threshold)
+    signal["n_reference_rows"] = len(reference)
+    signal["n_current_rows"] = len(current)
+    signal["included_synthetic"] = args.include_synthetic
+    with open(args.signal_path, "w") as f:
+        json.dump(signal, f, indent=2)
+    logger.info(
+        f"Drift signal: {'DRIFT DETECTED' if signal['dataset_drift_detected'] else 'no drift'} "
+        f"({signal['drifted_columns_count']} columns drifted, "
+        f"share={signal['drifted_columns_share']:.2f} vs threshold={args.drift_share_threshold})"
+    )
+    logger.info(f"Saved drift signal to {args.signal_path}")
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     tag = "DEMO-with-synthetic" if args.include_synthetic else "live-only"
     html_path = args.output_dir / f"drift_report_{tag}_{timestamp}.html"
@@ -145,7 +204,7 @@ def main():
             "production drift. Do not use it to make actual monitoring decisions."
         )
 
-    print(f"\nDone. Report: {html_path}")
+    print(f"\nDone. Report: {html_path}\nSignal: {args.signal_path}")
 
 
 if __name__ == "__main__":
