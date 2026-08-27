@@ -1,5 +1,5 @@
 outs:
-- md5: 17d783341915c676ef6ef444ace30658
-  size: 1083595
+- md5: ebed1376459238c8c3a5e649c16695bf
+  size: 1083795
   hash: md5
   path: Fraud_Detection_Pipeline.pkl
