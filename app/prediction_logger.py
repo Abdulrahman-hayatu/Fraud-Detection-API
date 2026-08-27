@@ -32,7 +32,10 @@ LOG_PATH = LOG_DIR / "predictions.jsonl"
 _write_lock = threading.Lock()
 
 
-def log_prediction(request_data: dict, response_data: dict, model_run_id: str, source: str = "live") -> None:
+def log_prediction(
+    request_data: dict, response_data: dict, model_run_id: str,
+    source: str = "live", request_id: str = None,
+) -> None:
     """Append one prediction record. Never raises -- a logging failure
     should not break the actual prediction response.
 
@@ -41,9 +44,17 @@ def log_prediction(request_data: dict, response_data: dict, model_run_id: str, s
     in the record itself so downstream analysis (e.g. Evidently drift
     reports) can filter synthetic rows out rather than silently mixing
     them with real production data.
+
+    request_id: caller-supplied or server-generated ID. Used by
+    scripts/check_performance_decay.py to join synthetic predictions
+    against their (simulated) true labels, recorded separately by
+    scripts/generate_synthetic_traffic.py. Real production predictions
+    have an ID too but nothing to join it against, since this API has no
+    feedback loop for real fraud outcomes.
     """
     record = {
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+        "request_id": request_id,
         "model_run_id": model_run_id,
         "source": source,
         "input": request_data,
