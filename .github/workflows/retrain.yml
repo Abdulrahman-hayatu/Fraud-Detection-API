@@ -1,0 +1,126 @@
+name: Retrain Pipeline
+
+# Runs the drift/decay-gated retrain pipeline (flows/retrain_pipeline.py).
+#
+# IMPORTANT CONTEXT: there's no real customer traffic behind this project.
+# On a real "scheduled" run (workflow_dispatch with demo_mode: false, or the
+# cron trigger), drift and decay checks will almost always report
+# "insufficient_data" and the pipeline will correctly do nothing -- that's
+# honest behavior, not a bug. Use demo_mode: true to see the full
+# check->retrain->gate chain actually exercise itself, using generated
+# synthetic traffic. See scripts/generate_synthetic_traffic.py for why that
+# traffic is clearly not real production data.
+#
+# Required repository secrets (Settings > Secrets and variables > Actions):
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  -- scoped IAM user for the DVC S3 remote
+#   MLFLOW_TRACKING_URI, MLFLOW_TRACKING_USERNAME, MLFLOW_TRACKING_PASSWORD  -- DagsHub
+
+"on":
+  schedule:
+    # Weekly, Monday 06:00 UTC. Adjust to taste -- this is a starting default,
+    # not a load-bearing business requirement, given there's no real traffic yet.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      demo_mode:
+        description: "Generate synthetic traffic and check drift against it (see workflow comment above)"
+        type: boolean
+        default: true
+      force_retrain:
+        description: "Skip the drift/decay gate and always retrain"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: eu-north-1
+  MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements-train.txt
+
+      - name: Pull data and current model from DVC
+        run: dvc pull -v
+
+      - name: Determine run parameters
+        id: params
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "demo_mode=${{ github.event.inputs.demo_mode }}" >> "$GITHUB_OUTPUT"
+            echo "force_retrain=${{ github.event.inputs.force_retrain }}" >> "$GITHUB_OUTPUT"
+          else
+            # Scheduled (cron) runs have no 'inputs' object at all -- default
+            # to real mode (no synthetic traffic, no forced retrain). This is
+            # the honest behavior described in the workflow-level comment.
+            echo "demo_mode=false" >> "$GITHUB_OUTPUT"
+            echo "force_retrain=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate synthetic demo traffic
+        if: steps.params.outputs.demo_mode == 'true'
+        run: |
+          uvicorn app.main:app --port 8000 &
+          SERVER_PID=$!
+          sleep 5
+          python scripts/generate_synthetic_traffic.py --n 300 --api-url http://127.0.0.1:8000
+          kill $SERVER_PID
+
+      - name: Run retrain pipeline
+        id: run_flow
+        run: |
+          FLAGS=""
+          if [ "${{ steps.params.outputs.demo_mode }}" == "true" ]; then
+            FLAGS="$FLAGS --include-synthetic-for-drift"
+          fi
+          if [ "${{ steps.params.outputs.force_retrain }}" == "true" ]; then
+            FLAGS="$FLAGS --force-retrain"
+          fi
+          python flows/retrain_pipeline.py $FLAGS
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: pipeline-reports-${{ github.run_id }}
+          path: reports/
+          if-no-files-found: warn
+
+      - name: Check whether a promotion happened
+        id: check_promotion
+        run: |
+          if [ -n "$(git status --porcelain Fraud_Detection/models/)" ]; then
+            echo "promoted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "promoted=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push promoted model to DVC remote
+        if: steps.check_promotion.outputs.promoted == 'true'
+        run: dvc push -v
+
+      - name: Commit and push promotion
+        if: steps.check_promotion.outputs.promoted == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Fraud_Detection/models/
+          git commit -m "Automated promotion via retrain pipeline (run ${{ github.run_id }})"
+          git push

@@ -1,8 +1,8 @@
-fastapi==0.141.1
-uvicorn==0.52.4
-pydantic==2.13.4
-pandas==3.0.2
-numpy==2.4.4
-scikit-learn==1.8.0
-xgboost==3.4.1
-joblib==1.5.3
+# Additional dependencies needed only for training (train.py), not for serving.
+-r requirements.txt
+pyarrow==25.0.1
+matplotlib==3.10.8
+evidently==0.7.21
+mlflow==3.15.2
+python-dotenv==1.0.1
+prefect==3.8.4
