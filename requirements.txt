@@ -1,5 +1,4 @@
 # Additional dependencies needed only for training (train.py), not for serving.
--r requirements.txt
 pyarrow==25.0.1
 matplotlib==3.10.8
 evidently==0.7.21
