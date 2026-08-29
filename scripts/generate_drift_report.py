@@ -79,10 +79,8 @@ def build_current(log_path: Path, include_synthetic: bool) -> pd.DataFrame:
     if skipped:
         logger.info(f"Excluded {skipped} log rows outside allowed sources ({allowed_sources}).")
     if not records:
-        raise ValueError(
-            f"No rows matched allowed sources {allowed_sources} in {log_path}. "
-            f"Nothing to compare against reference data."
-        )
+        logger.info(f"No rows matched allowed sources {allowed_sources} in {log_path}.")
+        return pd.DataFrame(columns=FEATURES + ["fraud_probability"])
     return pd.DataFrame(records)
 
 
@@ -155,6 +153,7 @@ def main():
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    args.signal_path.parent.mkdir(parents=True, exist_ok=True)
 
     logger.info("Building reference data (held-out training split + model output)...")
     reference = build_reference(args.data_path, args.model_path, args.test_size)
@@ -170,11 +169,24 @@ def main():
             if not args.include_synthetic
             else "Not enough rows even with synthetic traffic included -- check logs/predictions.jsonl."
         )
-        raise SystemExit(
+        message = (
             f"Only {len(current)} current-data rows available (minimum: {args.min_current_rows}). "
             f"{source_hint} Drift statistics are unreliable or will error out below this size. "
             f"{'Try --include-synthetic to demo the report format.' if not args.include_synthetic else ''}"
         )
+        logger.warning(message)
+        signal = {
+            "dataset_drift_detected": False,
+            "status": "insufficient_data",
+            "message": message,
+            "n_reference_rows": len(reference),
+            "n_current_rows": len(current),
+            "included_synthetic": args.include_synthetic,
+        }
+        with open(args.signal_path, "w") as f:
+            json.dump(signal, f, indent=2)
+        print(json.dumps(signal, indent=2))
+        return
 
     report = Report(metrics=[DataDriftPreset()])
     result = report.run(reference_data=reference, current_data=current)
