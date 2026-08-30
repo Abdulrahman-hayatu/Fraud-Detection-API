@@ -1,6 +1,6 @@
 {
-  "run_id": "20260829T105611Z",
-  "promoted_at_utc": "20260829T105707Z",
+  "run_id": "20260830T112812Z",
+  "promoted_at_utc": "20260830T112834Z",
   "promoted_by": "promotion_gate.py (automated champion/challenger comparison)",
   "metrics": {
     "threshold": 0.5,
