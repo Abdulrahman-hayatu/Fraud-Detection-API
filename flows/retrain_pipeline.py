@@ -2,21 +2,20 @@
 Prefect orchestration for the retrain pipeline.
 
 Retrain trigger policy (as decided): retrain if EITHER data/concept drift
-is detected OR performance decay is detected. No data-volume trigger --
+is detected OR performance decay is detected. No data-volume trigger is implemented because
 there's no real customer base generating the volume that would justify one.
 
 Each stage below calls an already-independently-tested script via
 subprocess and reads its JSON output, rather than reimplementing drift/
 decay/training/gating logic inside Prefect tasks. Every script already
-works correctly standalone (see their own verification history) --
+works correctly standalone (see their own verification history)
 Prefect's job here is sequencing and branching on their results, not
 duplicating logic that's already been tested.
 
 DEMO MODE: pass --include-synthetic-for-drift to have the drift check
 consider synthetic traffic. Without it, drift/decay checks only look at
 real "live" traffic and simulated ground truth, which will likely report
-"insufficient data" until real usage accumulates -- that's the honest
-behavior, not a bug to work around.
+"insufficient data" until real usage accumulates.
 
 Usage:
     python flows/retrain_pipeline.py
@@ -42,7 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def run_script(args: list, description: str) -> subprocess.CompletedProcess:
     """Runs a script and returns the completed process. Raises on
     non-zero exit EXCEPT we don't treat a script's own reported negative
-    finding (e.g. "no drift") as a failure -- these scripts exit 0 whether
+    finding (e.g. "no drift") as a failure. These scripts exit 0 whether
     or not they find something actionable; only a real crash is non-zero."""
     logger.info(f"Running: {description}")
     result = subprocess.run(

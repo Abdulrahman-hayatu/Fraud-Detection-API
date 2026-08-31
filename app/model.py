@@ -24,7 +24,7 @@ except Exception as e:
     ) from e
 
 # Model version, for tagging prediction logs. Falls back to "unknown" for
-# models promoted before model_metadata.json was introduced -- an older
+# models promoted before model_metadata.json was introduced. An older
 # .pkl shouldn't crash the app on startup, but logs from it won't be
 # traceable to a specific training run.
 if MODEL_METADATA_PATH.exists():

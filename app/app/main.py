@@ -20,7 +20,7 @@ def predict(
 
     x_prediction_source: internal-only header for tagging prediction logs
     (e.g. "synthetic" for demo/load-test traffic vs "live" for real
-    requests). Not part of the public API contract -- callers can ignore
+    requests). Not part of the public API contract. Callers can ignore
     this entirely and it defaults to "live".
     """
     return predict_fraud(request, source=x_prediction_source)

@@ -3,15 +3,15 @@ Prediction logging for the fraud detection API.
 
 Every /predict call is appended as one JSON line to a local log file.
 This is the data that later Evidently drift monitoring will compare
-against the training distribution -- without it, drift detection has
+against the training distribution. Without it, drift detection has
 nothing to measure.
 
-KNOWN LIMITATION -- read before deploying:
+KNOWN LIMITATION:
 If this API runs on a platform with an ephemeral filesystem (e.g. Render's
 free/standard tiers), this log file is WIPED on every restart or redeploy.
 Local JSONL logging is fine for local development and demonstrating the
 pattern, but production drift monitoring needs the log written to
-something that survives restarts -- e.g. shipped to S3/a database, or
+something that survives restarts e.g. shipped to S3/a database, or
 written to a mounted persistent disk. Treat this as step one of two, not
 a finished production logging solution.
 """
@@ -36,7 +36,7 @@ def log_prediction(
     request_data: dict, response_data: dict, model_run_id: str,
     source: str = "live", request_id: str = None,
 ) -> None:
-    """Append one prediction record. Never raises -- a logging failure
+    """Append one prediction record. Never raises. A logging failure
     should not break the actual prediction response.
 
     source: "live" for real API traffic, "synthetic" for generated demo/

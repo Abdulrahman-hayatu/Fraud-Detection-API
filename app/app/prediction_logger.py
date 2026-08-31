@@ -6,7 +6,7 @@ This is the data that later Evidently drift monitoring will compare
 against the training distribution -- without it, drift detection has
 nothing to measure.
 
-KNOWN LIMITATION -- read before deploying:
+KNOWN LIMITATION:
 If this API runs on a platform with an ephemeral filesystem (e.g. Render's
 free/standard tiers), this log file is WIPED on every restart or redeploy.
 Local JSONL logging is fine for local development and demonstrating the

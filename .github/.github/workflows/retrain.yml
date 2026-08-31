@@ -5,19 +5,19 @@ name: Retrain Pipeline
 # IMPORTANT CONTEXT: there's no real customer traffic behind this project.
 # On a real "scheduled" run (workflow_dispatch with demo_mode: false, or the
 # cron trigger), drift and decay checks will almost always report
-# "insufficient_data" and the pipeline will correctly do nothing -- that's
-# honest behavior, not a bug. Use demo_mode: true to see the full
+# "insufficient_data" and the pipeline will correctly do nothing 
+# Use demo_mode: true to see the full
 # check->retrain->gate chain actually exercise itself, using generated
 # synthetic traffic. See scripts/generate_synthetic_traffic.py for why that
 # traffic is clearly not real production data.
 #
 # Required repository secrets (Settings > Secrets and variables > Actions):
-#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY  -- scoped IAM user for the DVC S3 remote
-#   MLFLOW_TRACKING_URI, MLFLOW_TRACKING_USERNAME, MLFLOW_TRACKING_PASSWORD  -- DagsHub
+#   AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY scoped IAM user for the DVC S3 remote
+#   MLFLOW_TRACKING_URI, MLFLOW_TRACKING_USERNAME, MLFLOW_TRACKING_PASSWORD DagsHub
 
 "on":
   schedule:
-    # Weekly, Monday 06:00 UTC. Adjust to taste -- this is a starting default,
+    # Weekly, Monday 06:00 UTC. This is the default, update to taste.
     # not a load-bearing business requirement, given there's no real traffic yet.
     - cron: "0 6 * * 1"
   workflow_dispatch:
