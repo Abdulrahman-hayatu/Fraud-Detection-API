@@ -1,17 +1,17 @@
 """
 Detects performance decay by comparing metrics computed on recent
-predictions (joined against their true labels) to the currently-promoted
+predictions (joined against their true labels) to the currently promoted
 champion model's recorded training metrics.
 
 GROUND TRUTH LIMITATION: this currently only has ground truth for
 synthetic traffic (see scripts/generate_synthetic_traffic.py), because
 real fraud outcomes require a feedback loop (chargebacks, manual review)
-that doesn't exist in this project -- there's no real customer base
+that doesn't exist in this project there's no real customer base
 generating labeled outcomes. This script is structurally correct and
 would work identically once real labeled outcomes exist; until then, it
 demonstrates the pattern against simulated labels rather than measuring
 anything about actual production behavior. Every output makes this
-explicit rather than presenting synthetic-derived "decay" as real.
+explicit rather than presenting synthetic derived "decay" as real.
 
 Decay is flagged if:
   recall drops by more than --recall-tolerance (absolute) vs. the champion, OR
@@ -81,7 +81,7 @@ def main():
                          help="Absolute ROC-AUC drop vs. champion that triggers a decay flag")
     parser.add_argument("--min-samples", type=int, default=200,
                          help="Minimum joined samples required to compute reliable metrics. "
-                              "Set higher than you might expect: ROC-AUC is noisy on small samples -- "
+                              "Set higher than you might expect: ROC-AUC is noisy on small samples, and "
                               "testing this script with 200 samples against a model compared to "
                               "itself produced a 0.037 AUC swing from pure sampling variance, enough "
                               "to trip the default 0.03 tolerance with zero real degradation. If you "
@@ -93,7 +93,7 @@ def main():
     if not args.champion_metadata_path.exists():
         raise FileNotFoundError(
             f"No champion model metadata at {args.champion_metadata_path}. "
-            f"Nothing to compare against -- has a model ever been promoted?"
+            f"Nothing to compare against. Has a model ever been promoted?"
         )
     with open(args.champion_metadata_path) as f:
         champion = json.load(f)
@@ -107,7 +107,7 @@ def main():
         "champion_run_id": champion.get("run_id"),
         "n_joined_samples": len(joined),
         "ground_truth_note": "SIMULATED labels only (synthetic traffic). Not a measurement of real "
-                              "production performance -- see script docstring.",
+                              "production performance. See script docstring.",
     }
 
     if len(joined) < args.min_samples:

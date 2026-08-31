@@ -1,6 +1,6 @@
 """
 Generates synthetic prediction traffic against a running instance of the
-Fraud Detection API, for demo/portfolio purposes -- so there's non-trivial
+Fraud Detection API, for demo/portfolio purposes so there's non-trivial
 data in logs/predictions.jsonl to show Evidently drift monitoring working
 against, without waiting for real production traffic.
 
@@ -21,7 +21,7 @@ training dataset, its real isFraud label is known. This script writes
 that label to logs/simulated_ground_truth.jsonl, keyed by a request_id
 sent as the X-Request-Id header, so scripts/check_performance_decay.py
 can later join predictions against outcomes. Real production traffic has
-no equivalent -- actual fraud outcomes arrive weeks later via chargebacks,
+no equivalent and actual fraud outcomes arrive weeks later via chargebacks,
 if they arrive in an automatable form at all. This file exists ONLY to
 demonstrate what a decay-check pipeline would do once real labeled
 outcomes exist; it is not a substitute for one.

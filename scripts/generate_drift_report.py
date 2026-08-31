@@ -13,7 +13,7 @@ can shift even when individual input features look stable, if the
 By default this filters logs to source == "live" only, since synthetic
 demo traffic (see scripts/generate_synthetic_traffic.py) is not real
 production behavior and would give a misleading drift signal if mixed
-in. Use --include-synthetic to override this for demo purposes -- doing
+in. Use --include-synthetic to override this for demo purposes doing
 so is flagged loudly in the report filename and console output so nobody
 mistakes a demo run for a real production drift check.
 
@@ -86,9 +86,9 @@ def build_current(log_path: Path, include_synthetic: bool) -> pd.DataFrame:
 
 def extract_drift_signal(result, drift_share_threshold: float) -> dict:
     """Pull a structured pass/fail signal out of Evidently's metric_results,
-    instead of scraping the rendered HTML (which is fragile -- HTML structure
+    instead of scraping the rendered HTML (which is fragile and HTML structure
     isn't a stable API contract). Reuses Evidently's own DriftedColumnsCount
-    definition of "dataset drift": the share of individually-drifted columns
+    definition of "dataset drift": the share of individually drifted columns
     exceeding drift_share_threshold (Evidently's own default is 0.5).
     """
     drifted_count = None
@@ -106,8 +106,8 @@ def extract_drift_signal(result, drift_share_threshold: float) -> dict:
 
     if drifted_share is None:
         raise RuntimeError(
-            "Could not find 'Count of Drifted Columns' in Evidently's metric_results -- "
-            "the library's internal result structure may have changed. Re-check against "
+            "Could not find 'Count of Drifted Columns' in Evidently's metric_results. "
+            "The library's internal result structure may have changed. Re-check against "
             "the installed evidently version before trusting this script's output."
         )
 
@@ -133,7 +133,7 @@ def main():
     parser.add_argument(
         "--include-synthetic", action="store_true",
         help="Include synthetic demo traffic in the drift comparison. NOT representative of "
-             "real production behavior -- use only to demonstrate the report format.",
+             "real production behavior. Use only to demonstrate the report format.",
     )
     parser.add_argument(
         "--min-current-rows", type=int, default=30,
@@ -142,7 +142,7 @@ def main():
     )
     parser.add_argument(
         "--drift-share-threshold", type=float, default=0.5,
-        help="Share of individually-drifted columns above which the dataset is considered "
+        help="Share of individually drifted columns above which the dataset is considered "
              "drifted overall. 0.5 matches Evidently's own DriftedColumnsCount default.",
     )
     parser.add_argument(
@@ -167,7 +167,7 @@ def main():
         source_hint = (
             "Not enough live traffic yet."
             if not args.include_synthetic
-            else "Not enough rows even with synthetic traffic included -- check logs/predictions.jsonl."
+            else "Not enough rows even with synthetic traffic included check logs/predictions.jsonl."
         )
         message = (
             f"Only {len(current)} current-data rows available (minimum: {args.min_current_rows}). "

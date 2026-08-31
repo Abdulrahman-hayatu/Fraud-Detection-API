@@ -11,6 +11,7 @@ Usage:
     python train.py --data-path data.parquet --output-dir models --test-size 0.2
 """
 
+# import standard libraries
 import argparse
 import json
 import logging
@@ -51,6 +52,7 @@ NUMERIC_FEATURES = ["TransactionAmt", "C13", "C1", "C14"]
 CATEGORICAL_FEATURES = ["card4", "card6", "P_emaildomain"]
 PRIORITY_FEATURES = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -58,9 +60,6 @@ logging.basicConfig(
 logger = logging.getLogger("train")
 
 # Loads MLFLOW_TRACKING_URI/USERNAME/PASSWORD from a local .env file if present
-# (see .env.example). Without this call, those vars would only be picked up
-# if manually exported in the shell every session -- easy to forget, and the
-# exact kind of manual step that's caused problems earlier in this project.
 load_dotenv()
 
 MLFLOW_EXPERIMENT_NAME = "fraud-detection"
@@ -72,7 +71,7 @@ def setup_mlflow_tracking() -> bool:
     Reads MLFLOW_TRACKING_URI, MLFLOW_TRACKING_USERNAME, MLFLOW_TRACKING_PASSWORD
     (a DagsHub access token -- https://dagshub.com/user/settings/tokens). If
     MLFLOW_TRACKING_URI isn't set, tracking is silently skipped and training
-    proceeds exactly as before -- this keeps local training and CI usable
+    proceeds exactly as before. This keeps local training and CI usable
     without requiring every environment to have DagsHub credentials configured.
 
     Returns True if tracking is enabled for this run, False otherwise.
@@ -80,7 +79,7 @@ def setup_mlflow_tracking() -> bool:
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
     if not tracking_uri:
         logger.info(
-            "MLFLOW_TRACKING_URI not set -- skipping experiment tracking for this run. "
+            "MLFLOW_TRACKING_URI not set skipping experiment tracking for this run. "
             "Set MLFLOW_TRACKING_URI, MLFLOW_TRACKING_USERNAME, and MLFLOW_TRACKING_PASSWORD "
             "(a DagsHub token) to enable it."
         )
@@ -99,9 +98,9 @@ def setup_mlflow_tracking() -> bool:
     try:
         mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
     except Exception as e:
-        # set_experiment makes a network call to the tracking server -- a
-        # wrong URL, bad credentials, or an unreachable/down server must
-        # not crash the whole training run over an optional add-on.
+        """ set_experiment makes a network call to the tracking server. A
+            wrong URL, bad credentials, or an unreachable/down server does
+            not crash the whole training run. """
         logger.warning(
             f"Could not reach MLflow tracking server at {tracking_uri} ({e}). "
             f"Continuing training without experiment tracking for this run."
@@ -110,7 +109,7 @@ def setup_mlflow_tracking() -> bool:
     logger.info(f"MLflow tracking enabled: {tracking_uri} (experiment: {MLFLOW_EXPERIMENT_NAME})")
     return True
 
-
+# load the dataset and check for required columns 
 def load_data(data_path: Path) -> pd.DataFrame:
     logger.info(f"Loading dataset from {data_path}")
     if not data_path.exists():
@@ -124,7 +123,7 @@ def load_data(data_path: Path) -> pd.DataFrame:
 
     return df
 
-
+# dataset splitting function to split the dataset into training and testing sets
 def split_data(df: pd.DataFrame, test_size: float):
     X = df[PRIORITY_FEATURES]
     y = df[TARGET]
@@ -139,7 +138,7 @@ def split_data(df: pd.DataFrame, test_size: float):
     logger.info(f"Train shape: {X_train.shape}, Test shape: {X_test.shape}")
     return X_train, X_test, y_train, y_test
 
-
+# Build the machine learning pipeline with preprocessing and model training
 def build_pipeline(y_train: pd.Series) -> Pipeline:
     preprocessor = ColumnTransformer(
         transformers=[
@@ -174,10 +173,9 @@ def build_pipeline(y_train: pd.Series) -> Pipeline:
 def find_best_f1_threshold(y_test, y_proba) -> tuple[float, float]:
     """Return (threshold, f1) that maximizes F1 across the PR curve.
 
-    This is a diagnostic only -- it does NOT change DECISION_THRESHOLD
+    This is a diagnostic only and does NOT change DECISION_THRESHOLD
     the API serves at (see app/model.py). Surfacing it here means the
-    precision/recall tradeoff is a visible decision every training run,
-    not something buried in a notebook plot nobody re-opens.
+    precision/recall tradeoff is a visible decision every training run.
     """
     precision_vals, recall_vals, thresholds = precision_recall_curve(y_test, y_proba)
     denom = precision_vals[:-1] + recall_vals[:-1]
@@ -190,11 +188,9 @@ def find_best_f1_threshold(y_test, y_proba) -> tuple[float, float]:
     best_idx = int(np.argmax(f1_vals))
     return float(thresholds[best_idx]), float(f1_vals[best_idx])
 
-
+# Evaluate the trained model on the test set and compute various metrics
 def evaluate(pipeline: Pipeline, X_test, y_test) -> dict:
     y_proba = pipeline.predict_proba(X_test)[:, 1]
-    # Derived from DECISION_THRESHOLD explicitly -- do NOT use pipeline.predict()
-    # here, since its internal default only coincidentally matches 0.50 today.
     y_pred = (y_proba >= DECISION_THRESHOLD).astype(int)
 
     metrics = {
@@ -234,7 +230,7 @@ def evaluate(pipeline: Pipeline, X_test, y_test) -> dict:
 
     return metrics, y_pred, y_proba
 
-
+# Save the evaluation plots.
 def save_plots(y_test, y_pred, y_proba, pipeline: Pipeline, run_dir: Path):
     run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -288,11 +284,11 @@ def log_to_mlflow(pipeline: Pipeline, metrics: dict, args, df: pd.DataFrame, run
     Only called when tracking is enabled (see setup_mlflow_tracking). Kept
     as a separate function, not inlined into main(), so a failure here
     (e.g. a transient network issue talking to the DagsHub-hosted server)
-    can be caught without losing the local run -- the local model.pkl and
+    can be caught without losing the local run i.e the local model.pkl and
     metrics.json are already saved by the time this runs.
     """
     model_params = pipeline.named_steps["model"].get_params()
-    # Log only the hyperparameters that actually affect training behavior --
+    # Log only the hyperparameters that actually affect training behavior
     # not every internal sklearn/XGBoost default, which would clutter the
     # DagsHub UI with dozens of unchanging values.
     relevant_params = {
@@ -327,11 +323,10 @@ def log_to_mlflow(pipeline: Pipeline, metrics: dict, args, df: pd.DataFrame, run
         logger.info("Logged params, metrics, artifacts, and model to MLflow.")
     except Exception as e:
         # Tracking is a nice-to-have on top of the local run, not a
-        # dependency of it -- don't let a DagsHub/network hiccup fail
-        # an otherwise-successful training run.
+        # dependency of it.
         logger.warning(f"MLflow logging failed, continuing without it: {e}")
 
-
+# Main function to parse arguments and run the training pipeline
 def main():
     parser = argparse.ArgumentParser(description="Train the fraud detection pipeline")
     parser.add_argument("--data-path", type=Path, default=Path("ieee_fraud_detection.parquet"))

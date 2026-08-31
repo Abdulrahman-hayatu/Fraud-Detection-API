@@ -2,20 +2,20 @@
 Champion-vs-challenger promotion gate.
 
 Compares a newly trained ("challenger") model's metrics against the
-currently-promoted ("champion") model's recorded metrics. Promotes the
+currently promoted ("champion") model's recorded metrics. Promotes the
 challenger ONLY if it meets or beats the champion on BOTH:
   - recall (the priority metric per the team's recall-over-precision
-    decision -- see app/config.py)
+    decision. See app/config.py)
   - roc_auc (a guard metric, independent of the decision threshold)
 
 Why both, not just recall: recall alone is gameable. A degenerate model
 that flags every transaction as fraud gets recall=1.0 trivially, while
-being useless in production. ROC-AUC is threshold-independent and
+being useless in production. ROC-AUC is threshold independent and
 reflects the model's actual ranking ability, so a model can't pass the
 gate just by moving its threshold or predicting positive indiscriminately.
 
 Both metrics are read at the fixed DECISION_THRESHOLD (0.50) operating
-point recorded in each run's metrics.json -- not the optimal_threshold_
+point recorded in each run's metrics.json and not the optimal_threshold_
 diagnostic, which is informational only and not what's actually served.
 
 NOTE ON CODE DUPLICATION: this script reimplements the small amount of
@@ -24,7 +24,7 @@ also appears in train.py's --promote path, rather than importing it as a
 shared module. This project's scripts have consistently been kept
 self-contained (see the repeated NUMERIC_FEATURES/CATEGORICAL_FEATURES
 definitions across train.py and the scripts/ files) rather than
-introducing a shared-import convention -- this follows that existing
+introducing a shared-import convention, this follows that existing
 pattern rather than a decision that duplication here is free.
 
 Usage:
@@ -53,7 +53,7 @@ def load_metrics(path: Path, label: str) -> dict:
 
 def promote(challenger_pickle_path: Path, run_id: str, metrics: dict, canonical_dir: Path) -> Path:
     """Copies the challenger model to the canonical served path and writes
-    its metadata. Mirrors train.py's --promote logic (see module docstring
+    its metadata. Mirrors train.py's promote logic (see module docstring
     for why this isn't a shared import)."""
     canonical_dir.mkdir(parents=True, exist_ok=True)
     canonical_path = canonical_dir / "Fraud_Detection_Pipeline.pkl"
@@ -114,7 +114,7 @@ def main():
 
     if not args.champion_metadata_path.exists():
         # Bootstrap case: nothing is currently promoted. First model always
-        # gets promoted -- there's no champion to compare against.
+        # gets promoted because there's no champion to compare against.
         logger.info("No champion currently promoted. Promoting challenger as the first model.")
         canonical_path = promote(challenger_pickle_path, args.challenger_run_id, challenger_metrics, args.canonical_dir)
         decision.update({
